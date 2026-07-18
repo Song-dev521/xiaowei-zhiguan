@@ -9,6 +9,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.DayOfWeek;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -18,14 +20,83 @@ public class AiService {
     private static final String API_KEY = "sk-cc68131c2e6c4a948e146d6d4f634f0d";
     private static final String URL = "https://api.deepseek.com/chat/completions";
 
+    // ========== 天气 API 配置 ==========
+    private static final String WEATHER_KEY = "52ef9afa1ce840239bc2e9b180f2d418";
+    private static final String WEATHER_URL = "https://devapi.qweather.com/v7/weather/3d?location=101271201&key=" + WEATHER_KEY;
+
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(30))
             .build();
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // ========== 获取天气 ==========
+    private String getWeather() {
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(WEATHER_URL))
+                    .timeout(Duration.ofSeconds(5))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            String body = response.body();
+
+            JsonNode root = objectMapper.readTree(body);
+            if (root.has("code") && !"200".equals(root.get("code").asText())) {
+                return "未获取到天气数据";
+            }
+
+            JsonNode daily = root.get("daily");
+            if (daily == null || !daily.isArray() || daily.isEmpty()) {
+                return "未获取到天气数据";
+            }
+
+            JsonNode today = daily.get(0);
+            String tempMax = today.has("tempMax") ? today.get("tempMax").asText() : "未知";
+            String textDay = today.has("textDay") ? today.get("textDay").asText() : "未知";
+
+            return "未来3天最高气温" + tempMax + "℃，" + textDay;
+        } catch (Exception e) {
+            return "未获取到天气数据";
+        }
+    }
+
+    // ========== 获取节假日 ==========
+    private String getHoliday() {
+        try {
+            LocalDate today = LocalDate.now();
+            int month = today.getMonthValue();
+            int day = today.getDayOfMonth();
+            String todayStr = String.format("%02d%02d", month, day);
+
+            String[] holidays = {
+                    "0101", // 元旦
+                    "0405", // 清明节
+                    "0501", // 劳动节
+                    "0601", // 儿童节
+                    "1001", "1002", "1003", "1004", "1005", "1006", "1007", // 国庆节
+                    "1225"  // 圣诞节
+            };
+
+            for (String h : holidays) {
+                if (h.equals(todayStr)) {
+                    return "今天是节假日，客流可能增加，建议提前备货";
+                }
+            }
+
+            DayOfWeek dow = today.getDayOfWeek();
+            if (dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY) {
+                return "今天是周末，客流可能增加";
+            }
+
+            return "今天是普通工作日";
+        } catch (Exception e) {
+            return "未获取到节假日数据";
+        }
+    }
+
+    // ========== 调用 DeepSeek API ==========
     public String callDeepSeek(String userMessage) throws Exception {
-        // 构建请求体
         Map<String, Object> bodyMap = new HashMap<>();
         bodyMap.put("model", "deepseek-chat");
         bodyMap.put("temperature", 0.7);
@@ -53,16 +124,13 @@ public class AiService {
         System.out.println("=== DeepSeek API 返回 ===");
         System.out.println(responseBody);
 
-        // 使用 Jackson 解析返回
         JsonNode root = objectMapper.readTree(responseBody);
 
-        // 检查错误
         if (root.has("error")) {
             JsonNode error = root.get("error");
             throw new Exception("DeepSeek API 错误: " + error.get("message").asText());
         }
 
-        // 获取 content
         JsonNode choices = root.get("choices");
         if (choices == null || !choices.isArray() || choices.isEmpty()) {
             throw new Exception("choices 为空");
@@ -87,8 +155,11 @@ public class AiService {
         return content;
     }
 
+    // ========== 对外接口：生成经营建议（自动带天气+节假日） ==========
     public String getAdvice(String template, String userInput) throws Exception {
-        String fullPrompt = template + "\n\n【用户输入】\n" + userInput;
+        String weather = getWeather();
+        String holiday = getHoliday();
+        String fullPrompt = template + "\n\n【天气信息】\n" + weather + "\n\n【节假日信息】\n" + holiday + "\n\n【用户输入】\n" + userInput;
         return callDeepSeek(fullPrompt);
     }
 }
