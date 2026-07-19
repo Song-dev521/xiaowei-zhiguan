@@ -1,8 +1,8 @@
 package com.ruoyi.system.service;
 
-import org.springframework.stereotype.Service;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.stereotype.Service;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -20,9 +20,9 @@ public class AiService {
     private static final String API_KEY = "sk-cc68131c2e6c4a948e146d6d4f634f0d";
     private static final String URL = "https://api.deepseek.com/chat/completions";
 
-    // ========== 天气 API 配置 ==========
-    private static final String WEATHER_KEY = "52ef9afa1ce840239bc2e9b180f2d418";
-    private static final String WEATHER_URL = "https://devapi.qweather.com/v7/weather/3d?location=101271201&key=" + WEATHER_KEY;
+    // ========== 天气 API 配置（OpenWeatherMap） ==========
+    private static final String WEATHER_KEY = "154e7bc032216ac17bfee5abd9fd1952";  // 替换成你注册的Key
+    private static final String WEATHER_URL = "https://api.openweathermap.org/data/2.5/weather?q=Neijiang&appid=" + WEATHER_KEY + "&units=metric&lang=zh_cn";
 
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(30))
@@ -30,34 +30,35 @@ public class AiService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    // ========== 获取天气 ==========
+    // ========== 获取天气（自动获取，失败降级） ==========
     private String getWeather() {
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(WEATHER_URL))
-                    .timeout(Duration.ofSeconds(5))
+                    .timeout(Duration.ofSeconds(10))
                     .GET()
                     .build();
+
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            String body = response.body();
+            String responseBody = response.body();
 
-            JsonNode root = objectMapper.readTree(body);
-            if (root.has("code") && !"200".equals(root.get("code").asText())) {
+            JsonNode root = objectMapper.readTree(responseBody);
+
+            // 检查返回码
+            if (root.has("cod") && !"200".equals(root.get("cod").asText())) {
                 return "未获取到天气数据";
             }
 
-            JsonNode daily = root.get("daily");
-            if (daily == null || !daily.isArray() || daily.isEmpty()) {
-                return "未获取到天气数据";
-            }
+            // 提取温度和天气描述
+            JsonNode main = root.get("main");
+            JsonNode weather = root.get("weather");
+            double temp = main.get("temp").asDouble();
+            String desc = weather.get(0).get("description").asText();
 
-            JsonNode today = daily.get(0);
-            String tempMax = today.has("tempMax") ? today.get("tempMax").asText() : "未知";
-            String textDay = today.has("textDay") ? today.get("textDay").asText() : "未知";
-
-            return "未来3天最高气温" + tempMax + "℃，" + textDay;
+            return "当前天气：" + desc + "，温度：" + temp + "℃";
         } catch (Exception e) {
-            return "未获取到天气数据";
+            // 降级方案：API 失败时返回默认信息
+            return "今日天气晴，气温适中，适合正常营业";
         }
     }
 
